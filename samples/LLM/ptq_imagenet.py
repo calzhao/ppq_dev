@@ -205,11 +205,6 @@ with ENABLE_CUDA_KERNEL():
                 top1=full_pre_res, top5=quant_res)
             print(tp1_acc[model_checkpoint])
 
-            export_ppq_graph(
-                graph=ppq_quant_ir, 
-                platform=TargetPlatform.ONNXRUNTIME,
-                graph_save_to=f'{os.path.join(CFG_DUMP_PATH, model_name)}.onnx')
-
         print(tp1_acc)
         """analysis"""
         # reports = graphwise_error_analyse(
@@ -242,13 +237,17 @@ with ENABLE_CUDA_KERNEL():
         #     model=ppq_quant_ir, imagenet_validation_dir=CFG_VALIDATION_DIR,
         #     batchsize=CFG_BATCHSIZE, device=CFG_DEVICE, verbose=True)
 
-
         """output"""
         # print(type(ppq_int8_report),ppq_int8_report)
         # tp1_acc[model_name]=' * Prec@1 {top1:.3f} Prec@5 {top5:.3f}'.format(
         # top1=sum(ppq_int8_report['top1_accuracy'])/len(ppq_int8_report['top1_accuracy']), 
         # top5=sum(ppq_int8_report['top5_accuracy'])/len(ppq_int8_report['top5_accuracy']))
         # print(tp1_acc[model_name])
+
+        # export_ppq_graph(
+        #     graph=ppq_quant_ir, 
+        #     platform=TargetPlatform.ONNXRUNTIME,
+        #     graph_save_to=f'{os.path.join(CFG_DUMP_PATH, model_name)}.onnx')
         
         # evaluate_onnx_module_with_imagenet(
         #     onnxruntime_model_path=f'{os.path.join(CFG_DUMP_PATH, model_name)}.onnx', 

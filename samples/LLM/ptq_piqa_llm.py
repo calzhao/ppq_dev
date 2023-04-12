@@ -56,12 +56,12 @@ QUANT_SETTING = QuantizationSettingFactory.default_setting() # 用来指定量�
 # QUANT_SETTING.lsq_optimization_setting.is_scale_trainable = True
 # QUANT_SETTING.lsq_optimization_setting.collecting_device  = 'cpu'
 model_list=[
-    'facebook/opt-125m',
+    # 'facebook/opt-125m',
     # 'facebook/opt-350m',
     # 'facebook/opt-1.3b',
     # 'facebook/opt-2.7b',
     # 'facebook/opt-6.7b',
-    # 'facebook/opt-13b',
+    'facebook/opt-13b',
     # 'facebook/opt-30b',
     # 'facebook/opt-66b',
 ]
@@ -267,9 +267,9 @@ with ENABLE_CUDA_KERNEL():
 
 
         for model_checkpoint in model_list:
-            # model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32, device_map="auto") #.cuda()
-            model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32).cuda()
-            # print(model_fp16.hf_device_map.model_fp16.dtype)
+            model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32, device_map="balanced_low_0") #.cuda()
+            # model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32).cuda()
+            print(model_fp16.hf_device_map,model_fp16.dtype)
 
             """Preprocessing the data"""
             tokenizer = AutoTokenizer.from_pretrained(model_checkpoint, use_fast=False)

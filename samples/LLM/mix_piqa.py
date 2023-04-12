@@ -1,3 +1,5 @@
+import os
+os.environ['TRANSFORMERS_CACHE'] = '/mnt/cache/huggingface/'
 import torchvision
 from ppq import *
 from ppq.api import *
@@ -60,10 +62,12 @@ model_list=[
     # 'facebook/opt-125m',
     # 'facebook/opt-350m',
     # 'facebook/opt-1.3b',
-    'facebook/opt-2.7b',
+    # 'facebook/opt-2.7b',
     # 'facebook/opt-6.7b',
     # 'facebook/opt-13b',
-    # 'facebook/opt-30b',
+    'facebook/opt-30b',
+    'facebook/opt-13b',
+    'facebook/opt-6.7b',
     # 'facebook/opt-66b',
 ]
 # seq = ["input_ids", "attention_mask", "token_type_ids", 
@@ -236,8 +240,8 @@ with ENABLE_CUDA_KERNEL():
 
 
         for model_checkpoint in model_list:
-            # model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32, device_map="auto") #.cuda()
-            model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32).cuda()
+            model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32, device_map="auto") #.cuda()
+            # model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32).cuda()
             # print(model_fp16.hf_device_map.model_fp16.dtype)
 
             """Preprocessing the data"""
@@ -252,26 +256,47 @@ with ENABLE_CUDA_KERNEL():
             """quantize"""
             batch = evaluator.sample_batch()
             input_ids = batch.to(CFG_DEVICE)
-            # ppq_quant_ir_INT8 = quantize_torch_model(
-            #     model=model_fp16, calib_dataloader=evaluator.dataset.shuffle(seed=29).select(range(100)), input_shape=input_ids.shape, input_dtype=input_ids.dtype,
-            #     # model=model_fp16, calib_dataloader=evaluator.dataset, input_shape=input_ids.shape, input_dtype=input_ids.dtype,
-            #     calib_steps=100, collate_fn=evaluator.my_collate_fn, verbose=1,
-            #     device=CFG_DEVICE, platform=CFG_PLATFORM_INT8, setting=QUANT_SETTING)
-            # reports_int8 = layerwise_error_analyse(
-            #     graph=ppq_quant_ir_INT8, running_device=CFG_DEVICE, collate_fn=evaluator.my_collate_fn, dataloader=evaluator.dataset)
-            # np.save(model_checkpoint[-4:]+'_layer_int8_piqa',reports_int8)
-            # ppq_quant_ir_INT8 = None
+            ppq_quant_ir_INT8 = quantize_torch_model(
+                model=model_fp16, calib_dataloader=evaluator.dataset.shuffle(seed=29).select(range(100)), input_shape=input_ids.shape, input_dtype=input_ids.dtype,
+                # model=model_fp16, calib_dataloader=evaluator.dataset, input_shape=input_ids.shape, input_dtype=input_ids.dtype,
+                calib_steps=100, collate_fn=evaluator.my_collate_fn, verbose=1,
+                device=CFG_DEVICE, platform=CFG_PLATFORM_INT8, setting=QUANT_SETTING)
+            reports_int8 = layerwise_error_analyse(
+                graph=ppq_quant_ir_INT8, running_device=CFG_DEVICE, collate_fn=evaluator.my_collate_fn, dataloader=evaluator.dataset)
+            np.save(model_checkpoint[-4:]+'_layer_int8_piqa',reports_int8)
+            """evaluate"""
+            executor = TorchExecutor(graph=ppq_quant_ir_INT8, device=CFG_DEVICE)
+            model_forward_function = lambda input_tensor: torch.tensor(
+                executor(*[input_tensor])[0])
+            acc_int8 = evaluator.evaluate_ppq(model_forward_function)
+            tp1_acc[model_checkpoint]=' *  INT8 PREC {top5}'.format(top5=acc_int8)
+            # tp1_acc[model_checkpoint]=' * INT8 PREC {top1} FP8 PREC {top3} MIX PREC {top5}'.format(top1=acc_int8, top3=acc_fp8 ,top5=acc_mix8)
+            print(model_checkpoint,tp1_acc[model_checkpoint])
 
-            # """analysis"""
-            # ppq_quant_ir_FP8 = quantize_torch_model(
-            #     model=model_fp16, calib_dataloader=evaluator.dataset.shuffle(seed=29).select(range(100)), input_shape=input_ids.shape, input_dtype=input_ids.dtype,
-            #     # model=model_fp16, calib_dataloader=evaluator.dataset, input_shape=input_ids.shape, input_dtype=input_ids.dtype,
-            #     calib_steps=100, collate_fn=evaluator.my_collate_fn, verbose=1,
-            #     device=CFG_DEVICE, platform=CFG_PLATFORM_FP8, setting=QUANT_SETTING)
-            # reports_fp8 = layerwise_error_analyse(
-            #     graph=ppq_quant_ir_FP8, running_device=CFG_DEVICE, collate_fn=evaluator.my_collate_fn, dataloader=evaluator.dataset)    
-            # np.save(model_checkpoint[-4:]+'_layer_fp8_piqa',reports_fp8)
-            # ppq_quant_ir_FP8 = None
+            executor = None
+            ppq_quant_ir_INT8 = None
+
+            """analysis"""
+            ppq_quant_ir_FP8 = quantize_torch_model(
+                model=model_fp16, calib_dataloader=evaluator.dataset.shuffle(seed=29).select(range(100)), input_shape=input_ids.shape, input_dtype=input_ids.dtype,
+                # model=model_fp16, calib_dataloader=evaluator.dataset, input_shape=input_ids.shape, input_dtype=input_ids.dtype,
+                calib_steps=100, collate_fn=evaluator.my_collate_fn, verbose=1,
+                device=CFG_DEVICE, platform=CFG_PLATFORM_FP8, setting=QUANT_SETTING)
+            reports_fp8 = layerwise_error_analyse(
+                graph=ppq_quant_ir_FP8, running_device=CFG_DEVICE, collate_fn=evaluator.my_collate_fn, dataloader=evaluator.dataset)    
+            np.save(model_checkpoint[-4:]+'_layer_fp8_piqa',reports_fp8)
+
+            """evaluate"""
+            executor = TorchExecutor(graph=ppq_quant_ir_FP8, device=CFG_DEVICE)
+            model_forward_function = lambda input_tensor: torch.tensor(
+                executor(*[input_tensor])[0])
+            acc_fp8 = evaluator.evaluate_ppq(model_forward_function)
+            tp1_acc[model_checkpoint]=' *  FP8 PREC {top5}'.format(top5=acc_fp8)
+            # tp1_acc[model_checkpoint]=' * INT8 PREC {top1} FP8 PREC {top3} MIX PREC {top5}'.format(top1=acc_int8, top3=acc_fp8 ,top5=acc_mix8)
+            print(model_checkpoint,tp1_acc[model_checkpoint])
+
+            executor = None
+            ppq_quant_ir_FP8 = None
 
             reports_int8 = np.load(model_checkpoint[-4:]+'_layer_int8_piqa.npy',allow_pickle=True)
             reports_fp8 = np.load(model_checkpoint[-4:]+'_layer_fp8_piqa.npy',allow_pickle=True)

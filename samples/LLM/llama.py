@@ -39,8 +39,8 @@ CFG_BATCHSIZE = 16                             # 测试与calib时的 batchsize
 CFG_INPUT_SHAPE = (CFG_BATCHSIZE, 3, 224, 224) # 用来确定模型输入的尺寸，好像 imagenet 都是这个尺寸
 CFG_VALIDATION_DIR = '/data/val'   # 用来读取 validation dataset
 CFG_TRAIN_DIR = '/data/train'        # 用来读取 train dataset，注意该集合将被用来 calibrate 你的模型
-# CFG_PLATFORM = TargetPlatform.TRT_FP8     # 用来指定目标平台
-CFG_PLATFORM = TargetPlatform.PPL_CUDA_INT8  
+CFG_PLATFORM = TargetPlatform.TRT_FP8     # 用来指定目标平台
+# CFG_PLATFORM = TargetPlatform.PPL_CUDA_INT8  
 CFG_DUMP_PATH = 'Output/'                      # 所有模型保存的路径名
 # CACHE_DIR = ''
 QUANT_SETTING = QuantizationSettingFactory.default_setting() # 用来指定量化配置
@@ -69,7 +69,7 @@ QUANT_SETTING = QuantizationSettingFactory.default_setting() # 用来指定量�
 # QUANT_SETTING.lsq_optimization_setting.is_scale_trainable = True
 # QUANT_SETTING.lsq_optimization_setting.collecting_device  = 'cpu'
 model_list=[
-    'facebook/opt-125m',
+    # 'facebook/opt-125m',
     # 'facebook/opt-350m',
     # 'facebook/opt-1.3b',
     # 'facebook/opt-2.7b',
@@ -78,11 +78,11 @@ model_list=[
     # 'facebook/opt-30b',
     # 'facebook/opt-66b',
 
-    # "decapoda-research/llama-7b-hf",
+    "decapoda-research/llama-7b-hf",
     # "decapoda-research/llama-13b-hf",
+    # "decapoda-research/llama-30b-hf",
+    # "decapoda-research/llama-65b-hf",
 
-    # "/workspace/llama-7b-hf/",
-    # "decapoda-research/llama-7b-hf",
 ]
 # seq = ["input_ids", "attention_mask", "token_type_ids", 
 #         "position_ids", "head_mask", "inputs_embeds", 
@@ -152,23 +152,14 @@ with ENABLE_CUDA_KERNEL():
             # tokenizer = transformers.LlamaTokenizer.from_pretrained(model_checkpoint)
             # tokenizer.pad_token = "[PAD]"
             model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32, device_map="auto") #.cuda()
-            print(model_fp16.hf_device_map)
-            # model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32).cuda()
-
-            tokenizer = AutoTokenizer.from_pretrained(model_checkpoint, use_fast=False)
-            # device_map = infer_auto_device_map(model_fp16,max_memory = {0: "23GIB", 1: "23GIB", 2: "23GIB", 3: "23GIB", 4: "23GIB", 5: "23GIB", 6: "23GIB", 7: "23GIB"})
-            # del model_fp16
-            # print(device_map)
-            # model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32, device_map=device_map) #.cuda()
-            # model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32).cuda()
-            # print(model_fp16)
-            # print("model map: ",model_fp16.hf_device_map, model_fp16.dtype)
-            # print("infer_auto_device_map: ",infer_auto_device_map(model_fp16))
+            # print(model_fp16.hf_device_map)
+            # model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32)
 
 
             """Preprocessing the data"""
+            tokenizer = transformers.LlamaTokenizer.from_pretrained(model_checkpoint, use_fast=False)
+            tokenizer.pad_token = "[PAD]"
             # tokenizer = AutoTokenizer.from_pretrained(model_checkpoint, use_fast=False)
-            # evaluator = Evaluator(dataset, tokenizer, CFG_DEVICE)
             evaluator = Evaluator(dataset, tokenizer, CFG_DEVICE)
 
             # tokenized_datasets = tokenized_datasets.remove_columns([sentence1_key])
@@ -183,10 +174,10 @@ with ENABLE_CUDA_KERNEL():
             # train_dataloader = DataLoader(small_train_dataset, shuffle=True, batch_size=CFG_BATCHSIZE)
             # eval_dataloader = DataLoader(small_eval_dataset, batch_size=CFG_BATCHSIZE)
 
-            """Eval the original model"""
-            acc_fp16 = evaluator.evaluate(model_fp16)
-            tp1_acc[model_checkpoint]=' * FP16 PREC {top1} '.format(top1=acc_fp16)
-            print(model_checkpoint,tp1_acc[model_checkpoint])
+            # """Eval the original model"""
+            # acc_fp16 = evaluator.evaluate(model_fp16)
+            # tp1_acc[model_checkpoint]=' * FP16 PREC {top1} '.format(top1=acc_fp16)
+            # print(model_checkpoint,tp1_acc[model_checkpoint])
 
             """quantize"""
             for batch in evaluator.dataset:

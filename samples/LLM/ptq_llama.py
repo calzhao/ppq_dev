@@ -1,5 +1,3 @@
-import os
-os.environ['TRANSFORMERS_CACHE'] = '/mnt/cache/huggingface/'
 import torchvision
 from ppq import *
 from ppq.api import *
@@ -27,10 +25,9 @@ import numpy as np
 import torch
 from transformers.models.opt.modeling_opt import OPTAttention, OPTDecoderLayer, OPTForCausalLM
 from transformers import GPT2Tokenizer
-import transformers
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from accelerate import infer_auto_device_map
+import transformers
 
 # PPQ_CONFIG.PPQ_DEBUG=True
 
@@ -39,22 +36,11 @@ CFG_BATCHSIZE = 16                             # 测试与calib时的 batchsize
 CFG_INPUT_SHAPE = (CFG_BATCHSIZE, 3, 224, 224) # 用来确定模型输入的尺寸，好像 imagenet 都是这个尺寸
 CFG_VALIDATION_DIR = '/data/val'   # 用来读取 validation dataset
 CFG_TRAIN_DIR = '/data/train'        # 用来读取 train dataset，注意该集合将被用来 calibrate 你的模型
-# CFG_PLATFORM = TargetPlatform.TRT_FP8     # 用来指定目标平台
-CFG_PLATFORM = TargetPlatform.PPL_CUDA_INT8  
+CFG_PLATFORM = TargetPlatform.TRT_FP8     # 用来指定目标平台
+# CFG_PLATFORM = TargetPlatform.PPL_CUDA_INT8  
+# CFG_PLATFORM = TargetPlatform.FP32
 CFG_DUMP_PATH = 'Output/'                      # 所有模型保存的路径名
-# CACHE_DIR = ''
 QUANT_SETTING = QuantizationSettingFactory.default_setting() # 用来指定量化配置
-# device_map={'model.decoder.embed_tokens': 0, 'lm_head': 0, 'model.decoder.embed_positions': 0, 'model.decoder.final_layer_norm': 0, 'model.decoder.layers.0.self_attn': 0,
-#  'model.decoder.layers.0.activation_fn': 0, 'model.decoder.layers.0.self_attn_layer_norm': 0, 'model.decoder.layers.0.fc1': 0, 'model.decoder.layers.0.fc2': 0, 'model.decoder.layers.0.final_layer_norm': 0, 
-#  'model.decoder.layers.1': 1, 'model.decoder.layers.2': 1, 'model.decoder.layers.3': 1, 'model.decoder.layers.4': 1, 'model.decoder.layers.5': 1, 'model.decoder.layers.6': 1, 
-#  'model.decoder.layers.7': 1, 'model.decoder.layers.8': 1, 'model.decoder.layers.9': 1, 'model.decoder.layers.10': 1, 'model.decoder.layers.11': 1, 'model.decoder.layers.12': 1, 
-#  'model.decoder.layers.13': 1, 'model.decoder.layers.14': 1, 'model.decoder.layers.15': 1, 'model.decoder.layers.16': 1, 'model.decoder.layers.17': 1, 
-#  'model.decoder.layers.18.self_attn': 1, 'model.decoder.layers.18.activation_fn': 1, 'model.decoder.layers.18.self_attn_layer_norm': 1,'model.decoder.layers.18.fc1': 2, 'model.decoder.layers.18.fc2': 2, 'model.decoder.layers.18.final_layer_norm': 2, 
-#  'model.decoder.layers.19': 2, 'model.decoder.layers.20': 2, 'model.decoder.layers.21': 2, 'model.decoder.layers.22': 2, 'model.decoder.layers.23': 2, 'model.decoder.layers.24': 2, 
-#  'model.decoder.layers.25': 2, 'model.decoder.layers.26': 2, 'model.decoder.layers.27': 2, 'model.decoder.layers.28': 2, 'model.decoder.layers.29': 2, 'model.decoder.layers.30': 2, 
-#  'model.decoder.layers.31': 2, 'model.decoder.layers.32': 2, 'model.decoder.layers.33': 2, 'model.decoder.layers.34': 2, 'model.decoder.layers.35': 2, 'model.decoder.layers.36': 2, 
-#  'model.decoder.layers.37': 2, 'model.decoder.layers.38': 2, 'model.decoder.layers.39': 2, 'model.decoder.layers.40': 2, 'model.decoder.layers.41': 2, 'model.decoder.layers.42': 2, 
-#  'model.decoder.layers.43': 3, 'model.decoder.layers.44': 4, 'model.decoder.layers.45': 5, 'model.decoder.layers.46': 6, 'model.decoder.layers.47': 7}
 
 """QAT setting"""
 # ------------------------------------------------------------
@@ -69,7 +55,7 @@ QUANT_SETTING = QuantizationSettingFactory.default_setting() # 用来指定量�
 # QUANT_SETTING.lsq_optimization_setting.is_scale_trainable = True
 # QUANT_SETTING.lsq_optimization_setting.collecting_device  = 'cpu'
 model_list=[
-    'facebook/opt-125m',
+    # 'facebook/opt-125m',
     # 'facebook/opt-350m',
     # 'facebook/opt-1.3b',
     # 'facebook/opt-2.7b',
@@ -77,12 +63,7 @@ model_list=[
     # 'facebook/opt-13b',
     # 'facebook/opt-30b',
     # 'facebook/opt-66b',
-
-    # "decapoda-research/llama-7b-hf",
-    # "decapoda-research/llama-13b-hf",
-
-    # "/workspace/llama-7b-hf/",
-    # "decapoda-research/llama-7b-hf",
+    "decapoda-research/llama-7b-hf",
 ]
 # seq = ["input_ids", "attention_mask", "token_type_ids", 
 #         "position_ids", "head_mask", "inputs_embeds", 
@@ -100,7 +81,7 @@ class Evaluator:
             return example
 
         self.dataset = self.dataset.map(tokenize_function, batched=True)
-        print(self.dataset[0])
+        # print(self.dataset[0])
         self.dataset.set_format(type='torch', columns=['input_ids','attention_mask'])
 
     @torch.no_grad()
@@ -136,6 +117,7 @@ class Evaluator:
             last_token_logits = outputs[:, int(torch.sum(batch['attention_mask'])-2), :]
             pred = last_token_logits.argmax(dim=-1)
             # print(pred, label)
+            pred = pred.to(self.device)
             total += label.size(0)
             hit += (pred == label).sum().item()
         acc = hit / total
@@ -145,29 +127,20 @@ with ENABLE_CUDA_KERNEL():
     if __name__ == '__main__':
 
         dataset = load_dataset('lambada', split='validation')
-        dataset = dataset.shuffle(seed=42).select(range(1000))
+        dataset = dataset.shuffle(seed=42).select(range(20))
         print(len(dataset),dataset[0])
 
         for model_checkpoint in model_list:
-            # tokenizer = transformers.LlamaTokenizer.from_pretrained(model_checkpoint)
-            # tokenizer.pad_token = "[PAD]"
+            # gpu_tracker.track()     
             model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32, device_map="auto") #.cuda()
             print(model_fp16.hf_device_map)
-            # model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32).cuda()
-
-            tokenizer = AutoTokenizer.from_pretrained(model_checkpoint, use_fast=False)
-            # device_map = infer_auto_device_map(model_fp16,max_memory = {0: "23GIB", 1: "23GIB", 2: "23GIB", 3: "23GIB", 4: "23GIB", 5: "23GIB", 6: "23GIB", 7: "23GIB"})
-            # del model_fp16
-            # print(device_map)
-            # model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32, device_map=device_map) #.cuda()
-            # model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32).cuda()
-            # print(model_fp16)
-            # print("model map: ",model_fp16.hf_device_map, model_fp16.dtype)
-            # print("infer_auto_device_map: ",infer_auto_device_map(model_fp16))
-
+            # model_fp16 = transformers.LlamaForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32).cuda()
+            # gpu_tracker.track()     
 
             """Preprocessing the data"""
             # tokenizer = AutoTokenizer.from_pretrained(model_checkpoint, use_fast=False)
+            tokenizer = transformers.LlamaTokenizer.from_pretrained(model_checkpoint)
+            tokenizer.pad_token = "[PAD]"
             # evaluator = Evaluator(dataset, tokenizer, CFG_DEVICE)
             evaluator = Evaluator(dataset, tokenizer, CFG_DEVICE)
 
@@ -193,15 +166,18 @@ with ENABLE_CUDA_KERNEL():
                 break
             # input_list = [k for k in batch if k!="labels" ]
             # collate_fn  = lambda x: {k:x[k].cuda() for k in input_list}
+            # gpu_tracker.track() 
             input_ids = batch['input_ids'].to(CFG_DEVICE).unsqueeze(0)
             ppq_quant_ir = quantize_torch_model(
-                model=model_fp16, calib_dataloader=evaluator.dataset.shuffle(seed=29).select(range(100)), input_shape=input_ids.shape, input_dtype=input_ids.dtype,
+                model=model_fp16, calib_dataloader=evaluator.dataset.shuffle(seed=29).select(range(20)), input_shape=input_ids.shape, input_dtype=input_ids.dtype,
                 # model=model_fp16, calib_dataloader=evaluator.dataset, input_shape=input_ids.shape, input_dtype=input_ids.dtype,
-                calib_steps=100, collate_fn=lambda x: x['input_ids'].to(CFG_DEVICE).unsqueeze(0), verbose=1,
+                calib_steps=20, collate_fn=lambda x: x['input_ids'].to(CFG_DEVICE).unsqueeze(0), verbose=1,
                 device=CFG_DEVICE, platform=CFG_PLATFORM, setting=QUANT_SETTING)
+            # gpu_tracker.track() 
 
             """evaluate"""
             executor = TorchExecutor(graph=ppq_quant_ir, device=CFG_DEVICE)
+            # gpu_tracker.track() 
             model_forward_function = lambda input_tensor: torch.tensor(
                 executor(*[input_tensor])[0])
             acc_fp8 = evaluator.evaluate_ppq(model_forward_function)

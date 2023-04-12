@@ -170,6 +170,8 @@ def dump_torch_to_onnx(
     # set model to eval mode, stabilize normalization weights.
     assert isinstance(model, torch.nn.Module), (
         f'Model must be instance of torch.nn.Module, however {type(model)} is given.')
+    # device = 'cpu'
+    # model.to('cpu')
     model.eval()
 
     if inputs is None:
@@ -177,9 +179,12 @@ def dump_torch_to_onnx(
     else: dummy_input = inputs
 
     # print("dummy_input",dummy_input)
+    # torch.cuda.empty_cache()
+    # model = model.half()
     if inputs is not None:
-        input_names = ['input_ids', 'attention_mask', 'token_type_ids'][:len(inputs)]
-        # print(input_names)
+        # input_names = ['input_ids', 'attention_mask', 'token_type_ids'][:len(inputs)]
+        input_names = [k for k in inputs]
+        print(input_names)
         torch.onnx.export(
             model=model, args=dummy_input, input_names = input_names,
             verbose=False, f=onnx_export_file, opset_version=11,
@@ -268,6 +273,7 @@ def quantize_onnx_model(
 
     quantizer = PFL.Quantizer(platform, ppq_ir)
     executor = TorchExecutor(graph=quantizer._graph, device=device)
+    # executor = TorchExecutor(graph=quantizer._graph, device='cpu')
     if do_quantize:
         quantizer.quantize(
             inputs=dummy_input,
