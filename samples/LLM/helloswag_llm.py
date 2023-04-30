@@ -60,12 +60,12 @@ QUANT_SETTING = QuantizationSettingFactory.default_setting() # 用来指定量�
 # QUANT_SETTING.lsq_optimization_setting.collecting_device  = 'cpu'
 model_list=[
     # 'facebook/opt-125m',
-    # 'facebook/opt-350m',
+    'facebook/opt-350m',
     # 'facebook/opt-1.3b',
     # 'facebook/opt-2.7b',
     # 'facebook/opt-6.7b',
-    'facebook/opt-13b',
-    'facebook/opt-30b',
+    # 'facebook/opt-13b',
+    # 'facebook/opt-30b',
     # 'facebook/opt-66b',
 ]
 # seq = ["input_ids", "attention_mask", "token_type_ids", 

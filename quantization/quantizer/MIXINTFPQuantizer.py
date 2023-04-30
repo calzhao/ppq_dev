@@ -40,8 +40,8 @@ class MIXINTFPQuantizer(BaseQuantizer):
                     conv_weight_config.policy = QuantizationPolicy(
                         QuantizationProperty.SYMMETRICAL +
                         QuantizationProperty.PER_CHANNEL + 
-                        QuantizationProperty.FLOATING +
-                        QuantizationProperty.POWER_OF_2
+                        QuantizationProperty.FLOATING 
+                        # + QuantizationProperty.POWER_OF_2
                     )
                     conv_weight_config.observer_algorithm = 'floating'
                 else:
@@ -61,8 +61,8 @@ class MIXINTFPQuantizer(BaseQuantizer):
                     gemm_weight_config.policy = QuantizationPolicy(
                         QuantizationProperty.SYMMETRICAL +
                         QuantizationProperty.PER_CHANNEL +
-                        QuantizationProperty.FLOATING +
-                        QuantizationProperty.POWER_OF_2
+                        QuantizationProperty.FLOATING 
+                        # + QuantizationProperty.POWER_OF_2
                     )
                     gemm_weight_config.observer_algorithm = 'floating'
                 else:
@@ -110,8 +110,9 @@ class MIXINTFPQuantizer(BaseQuantizer):
             policy=QuantizationPolicy(
             QuantizationProperty.SYMMETRICAL +
             QuantizationProperty.PER_TENSOR +
-            QuantizationProperty.FLOATING +
-            QuantizationProperty.POWER_OF_2),
+            QuantizationProperty.FLOATING 
+            # + QuantizationProperty.POWER_OF_2
+            ),
             rounding=self.rounding_policy, op=operation, num_of_bits=self._num_of_bits, 
             exponent_bits=4, quant_max= 448.0, quant_min= - 448.0, observer_algorithm='floating')
 

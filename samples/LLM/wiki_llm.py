@@ -1,3 +1,5 @@
+import os
+os.environ['TRANSFORMERS_CACHE'] = '/mnt/cache/huggingface/'
 import torchvision
 from ppq import *
 from ppq.api import *
@@ -28,8 +30,13 @@ from transformers import GPT2Tokenizer
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import torch.nn.functional as F
+import re
+import numpy as np
+from lm_eval import utils
+from lm_eval.metrics import mean, weighted_perplexity, weighted_mean, bits_per_byte
+import re
+import random
 
-from lm_eval.base import MultipleChoiceTask
 
 # PPQ_CONFIG.PPQ_DEBUG=True
 
@@ -56,11 +63,11 @@ QUANT_SETTING = QuantizationSettingFactory.default_setting() # 用来指定量�
 # QUANT_SETTING.lsq_optimization_setting.is_scale_trainable = True
 # QUANT_SETTING.lsq_optimization_setting.collecting_device  = 'cpu'
 model_list=[
-    'facebook/opt-125m',
-    # 'facebook/opt-350m',
-    # 'facebook/opt-1.3b',
-    # 'facebook/opt-2.7b',
-    # 'facebook/opt-6.7b',
+    # 'facebook/opt-125m',
+    'facebook/opt-350m',
+    'facebook/opt-1.3b',
+    'facebook/opt-2.7b',
+    'facebook/opt-6.7b',
     # 'facebook/opt-13b',
     # 'facebook/opt-30b',
     # 'facebook/opt-66b',
@@ -76,65 +83,66 @@ class Evaluator:
         self.tokenizer = tokenizer
         self.device = device
         self._model_call=_model_call
+        self.eot_token_id = self.tokenizer.eos_token_id
 
-        def set_padding(examples):
-            goal_len = max(len(elem) for elem in examples['goal'])
-            choice1_len = max(len(elem) for elem in examples['sol1'])
-            choice2_len = max(len(elem) for elem in examples['sol2'])
-            self.padding_length = max(goal_len+choice1_len,goal_len+choice2_len)+20
-            return None
-        self.dataset.map(set_padding, batched=True)
-        
-        def tokenize_function(examples):
-            out_doc = self._process_doc(examples)
-            out_doc['context_enc'] = self.tokenizer(self.doc_to_text(out_doc),truncation=True)
-            out_doc['continuation_enc1'] = self.tokenizer(self.doc_to_target1(out_doc),truncation=True)
-            out_doc['continuation_enc2'] = self.tokenizer(self.doc_to_target2(out_doc),truncation=True)
-            return out_doc
-        
-        self.dataset = self.dataset.map(tokenize_function, batched=False)
-        print(self.padding_length, self.dataset[0])
-        # self.dataset.set_format(type='torch', columns=['input_ids','attention_mask','context_enc','continuation_enc'])
+        trainenc = tokenizer("\n\n".join(dataset['text']))
+        print("nn seq",tokenizer("\n\n"))
+        print("text length",len(trainenc['input_ids']))
+
+        random.seed(0)
+        trainloader = []
+        self.seqlen=_model_call.config.max_position_embeddings
+        nsamples = 20
+        for _ in range(nsamples):
+            i = random.randint(0, len(trainenc.input_ids) - self.seqlen - 1)
+            j = i + self.seqlen
+            inp = trainenc.input_ids[i:j]
+            trainloader.append(inp)
+        # return trainloader, testenc
+        self.dataset = trainloader
+        print("dataset len",len(self.dataset))
+
+        self.calib_dataloader = random.sample(trainloader, 10)
+
+        self.padding_length=self.seqlen
+        print("padding_length",self.padding_length)
 
 
-    def doc_to_text(self, doc):
-        # print("Question: " + doc["goal"] + "\nAnswer:")
-        return "Question: " + doc["goal"] + "\nAnswer:"
-    def doc_to_target1(self, doc):
-        # print("target1 ", " " + doc["choices"][0])
-        return " " + doc["choices"][0]
-    def doc_to_target2(self, doc):
-        # print("target2 ", " " + doc["choices"][1])
-        return " " + doc["choices"][1]
-    def _process_doc(self, doc):
-        out_doc = {
-            "goal": doc["goal"],
-            "choices": [doc["sol1"], doc["sol2"]],
-            "gold": doc["label"],
-        }
-        return out_doc
+    @property
+    def max_length(self):
+        try:
+            return self._model_call.config.n_ctx
+        except AttributeError:
+            # gptneoconfig doesn't have n_ctx apparently
+            return self._model_call.config.max_position_embeddings
+
+    def loglikelihood_rolling(self, token, foward_func=None,sample=False):
+        # TODO: Implement caching once we've confirmed the perplexity implementation
+        # TODO: automatic batch size detection for vectorization
+
+        rolling_token_windows = list(
+            map(
+                utils.make_disjoint_window,
+                utils.get_rolling_token_windows(
+                    token_list=token,
+                    prefix_token=self.eot_token_id,
+                    max_seq_len=self.max_length,
+                    context_len=1,
+                ),
+            )
+        )
+        string_nll = self._loglikelihood_tokens( *rolling_token_windows[0],foward_func=foward_func, sample=sample)
+        if sample:
+            return string_nll
+
+        string_nll = string_nll[0]
+
+        return string_nll
+
     def _loglikelihood_tokens(self, context_enc, continuation_enc, foward_func=None, sample=False):
 
         padding_length = self.padding_length
 
-        # because vectorizing is annoying, we first convert each (context, continuation) pair to padded
-        # tensors, then we pack them together into a batch, call the model, and then pick it all apart
-        # again because vectorizing is annoying
-
-        # sanity check
-        # assert len(context_enc) > 0
-        # assert len(continuation_enc) > 0
-
-        # print("enc shape ",len(context_enc),len(continuation_enc))
-        # print(context_enc,continuation_enc)
-        # how this all works:
-        #          CTX      CONT
-        # inp    0 1 2 3|4 5 6 7 8 9   <- last token is deleted by inp[:, :-1]
-        # gpt2    \               \
-        # logits   1 2 3|4 5 6 7 8 9   <- the ctx half gets tossed out by the
-        # cont_toks      4 5 6 7 8 9      [:, -len(continuation_enc):, :self.vocab_size] slice
-
-        # when too long to fit in context, truncate from the left
         inp = torch.tensor(
             (context_enc + continuation_enc)[:][:-1],
             dtype=torch.long,
@@ -207,67 +215,49 @@ class Evaluator:
         return torch.ones((1,self.padding_length),dtype=torch.int32)
 
     def my_collate_fn(self, batch):
-        context_enc = batch['context_enc']['input_ids']
-        continuation_enc1 = batch['continuation_enc1']['input_ids']
-        input1 = self._loglikelihood_tokens(context_enc,continuation_enc1,sample=True)
+        context_enc = batch
+        input1 = self.loglikelihood_rolling(context_enc,sample=True)
         return input1.to(self.device)
 
     @torch.no_grad()
     def evaluate(self, model):
         model.eval()
         # The task is to predict the last word of the input.
-        total, hit = 0, 0
+        outputs = []
         for batch in self.dataset:
-            context_enc = batch['context_enc']['input_ids']
-            continuation_enc1 = batch['continuation_enc1']['input_ids']
-            continuation_enc2 = batch['continuation_enc2']['input_ids']
-            # label = input_ids[:, -1]
-            # print("label",doc['gold'])
-            label = batch['gold']
-            # outputs = model(input_ids,attention_mask=attention_mask)
-            outputs1 = self._loglikelihood_tokens(context_enc,continuation_enc1)[0]
-            outputs2 = self._loglikelihood_tokens(context_enc,continuation_enc2)[0]
-            # print(outputs1,outputs2)
-            # print(torch.sum(last_token_logits),last_token_logits)
-            pred = 0 if outputs1 > outputs2 else 1
-            # print(pred, label)
-            total += 1
-            hit += pred == label
-        acc = hit / total
-        return acc
+            # context_enc = batch['enc']['input_ids']
+            # print(batch)
+            # words = self.count_words(batch['raw'])
+            context_enc = batch
+            # print("context_enc",context_enc)
+            words = len(batch)
+            loglikelihood = self.loglikelihood_rolling(context_enc)
+            # print(loglikelihood,words)
+            outputs.append((loglikelihood, words))
+        # acc = hit / total
+        return weighted_perplexity(outputs)
     
     def evaluate_ppq(self, fw_func):
         # The task is to predict the last word of the input.
-        total, hit = 0, 0
+        outputs = []
         for batch in self.dataset:
-            context_enc = batch['context_enc']['input_ids']
-            continuation_enc1 = batch['continuation_enc1']['input_ids']
-            continuation_enc2 = batch['continuation_enc2']['input_ids']
-            # label = input_ids[:, -1]
-            # print("label",doc['gold'])
-            label = batch['gold']
-            # outputs = model(input_ids,attention_mask=attention_mask)
-            outputs1 = self._loglikelihood_tokens(context_enc,continuation_enc1,foward_func=fw_func)[0]
-            outputs2 = self._loglikelihood_tokens(context_enc,continuation_enc2,foward_func=fw_func)[0]
-            # print(outputs1,outputs2)
-            # print(torch.sum(last_token_logits),last_token_logits)
-            pred = 0 if outputs1 > outputs2 else 1
-            # print(pred, label)
-            total += 1
-            hit += pred == label
-        acc = hit / total
-        return acc
+            context_enc = batch
+            words = len(batch)
+            loglikelihood = self.loglikelihood_rolling(context_enc,foward_func=fw_func)
+            outputs.append((loglikelihood, words))
+        # acc = hit / total
+        return weighted_perplexity(outputs)
 
 with ENABLE_CUDA_KERNEL():
     if __name__ == '__main__':
 
-        dataset = load_dataset('piqa', split='validation')
-        dataset = dataset.shuffle(seed=42).select(range(1000))
+        dataset = load_dataset('wikitext', 'wikitext-2-raw-v1',split='validation')
+        # dataset = dataset.shuffle(seed=42).select(range(1000))
         print(len(dataset),dataset[0])
 
 
         for model_checkpoint in model_list:
-            model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32, device_map="balanced_low_0") #.cuda()
+            model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32, device_map="auto") #.cuda()
             # model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32).cuda()
             print(model_fp16.hf_device_map,model_fp16.dtype)
 
@@ -292,15 +282,15 @@ with ENABLE_CUDA_KERNEL():
             tp1_acc[model_checkpoint]=' * FP16 PREC {top1} '.format(top1=acc_fp16)
             print(model_checkpoint,tp1_acc[model_checkpoint])
 
-            """quantize"""
+            # """quantize"""
             batch = evaluator.sample_batch()
             # input_list = [k for k in batch if k!="labels" ]
             # collate_fn  = lambda x: {k:x[k].cuda() for k in input_list}
             input_ids = batch.to(CFG_DEVICE)
             ppq_quant_ir = quantize_torch_model(
-                model=model_fp16, calib_dataloader=evaluator.dataset.shuffle(seed=29).select(range(100)), input_shape=input_ids.shape, input_dtype=input_ids.dtype,
+                model=model_fp16, calib_dataloader=evaluator.calib_dataloader, input_shape=input_ids.shape, input_dtype=input_ids.dtype,
                 # model=model_fp16, calib_dataloader=evaluator.dataset, input_shape=input_ids.shape, input_dtype=input_ids.dtype,
-                calib_steps=100, collate_fn=evaluator.my_collate_fn, verbose=1,
+                calib_steps=10, collate_fn=evaluator.my_collate_fn, verbose=1,
                 device=CFG_DEVICE, platform=CFG_PLATFORM, setting=QUANT_SETTING)
 
             """evaluate"""

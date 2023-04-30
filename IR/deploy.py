@@ -9,7 +9,6 @@ from .base.graph import BaseGraph, Operation, Variable
 from .processer import GraphCommandProcessor
 from .quantize import QuantableOperation
 
-import GPUtil
 
 class RunnableGraph(GraphCommandProcessor):
     def __init__(self, graph: BaseGraph, device: str = None):
@@ -106,11 +105,11 @@ class RunnableGraph(GraphCommandProcessor):
             #         )
 
         length = len(self._graph.variables)
-        cuda_num = 7
+        cuda_num = torch.cuda.device_count()
         block = length // cuda_num
-        # print(length)
         # GPUtil.showUtilization(all=True)
         flag, blockidx=0, 0
+        device = "cuda:"+str(blockidx)
         for _, variable in self._graph.variables.items():
             flag+=1
             if flag > block:

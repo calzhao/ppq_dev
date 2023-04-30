@@ -88,6 +88,16 @@ class PassiveParameterQuantizePass(QuantizationOptimizationPass):
         for op in graph.operations.values():
             if not isinstance(op, QuantableOperation): continue
 
+            cfg_0 = op.config_with_variable[0][0]
+            if isinstance(cfg_0._scale, torch.Tensor):
+                device = cfg_0._scale.device
+            else:
+                device = 'cuda:0'
+
+            for cfg, var in op.config_with_variable:
+                if isinstance(cfg._scale, torch.Tensor): cfg._scale = cfg._scale.to(device)
+                if isinstance(cfg._offset, torch.Tensor): cfg._offset = cfg._offset.to(device)
+
             if op.type in {'Conv', 'ConvTranspose', 'Gemm'} and self.process_bias:
                 # inputs are [input value, weight, bias(optional)]
                 if op.num_of_input == 3:

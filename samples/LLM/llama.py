@@ -70,7 +70,7 @@ QUANT_SETTING = QuantizationSettingFactory.default_setting() # 用来指定量�
 # QUANT_SETTING.lsq_optimization_setting.collecting_device  = 'cpu'
 model_list=[
     # 'facebook/opt-125m',
-    # 'facebook/opt-350m',
+    'facebook/opt-350m',
     # 'facebook/opt-1.3b',
     # 'facebook/opt-2.7b',
     # 'facebook/opt-6.7b',
@@ -78,7 +78,7 @@ model_list=[
     # 'facebook/opt-30b',
     # 'facebook/opt-66b',
 
-    "decapoda-research/llama-7b-hf",
+    # "decapoda-research/llama-7b-hf",
     # "decapoda-research/llama-13b-hf",
     # "decapoda-research/llama-30b-hf",
     # "decapoda-research/llama-65b-hf",
@@ -145,21 +145,23 @@ with ENABLE_CUDA_KERNEL():
     if __name__ == '__main__':
 
         dataset = load_dataset('lambada', split='validation')
-        dataset = dataset.shuffle(seed=42).select(range(1000))
+        dataset = dataset.shuffle(seed=42).select(range(10))
         print(len(dataset),dataset[0])
 
         for model_checkpoint in model_list:
             # tokenizer = transformers.LlamaTokenizer.from_pretrained(model_checkpoint)
             # tokenizer.pad_token = "[PAD]"
             model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32, device_map="auto") #.cuda()
-            # print(model_fp16.hf_device_map)
+            print(model_fp16.hf_device_map)
             # model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32)
 
 
             """Preprocessing the data"""
-            tokenizer = transformers.LlamaTokenizer.from_pretrained(model_checkpoint, use_fast=False)
-            tokenizer.pad_token = "[PAD]"
-            # tokenizer = AutoTokenizer.from_pretrained(model_checkpoint, use_fast=False)
+            if "llama" in model_checkpoint:
+                tokenizer = transformers.LlamaTokenizer.from_pretrained(model_checkpoint, use_fast=False)
+                tokenizer.pad_token = "[PAD]"
+            else:
+                tokenizer = AutoTokenizer.from_pretrained(model_checkpoint, use_fast=False)
             evaluator = Evaluator(dataset, tokenizer, CFG_DEVICE)
 
             # tokenized_datasets = tokenized_datasets.remove_columns([sentence1_key])
@@ -186,9 +188,9 @@ with ENABLE_CUDA_KERNEL():
             # collate_fn  = lambda x: {k:x[k].cuda() for k in input_list}
             input_ids = batch['input_ids'].to(CFG_DEVICE).unsqueeze(0)
             ppq_quant_ir = quantize_torch_model(
-                model=model_fp16, calib_dataloader=evaluator.dataset.shuffle(seed=29).select(range(100)), input_shape=input_ids.shape, input_dtype=input_ids.dtype,
+                model=model_fp16, calib_dataloader=evaluator.dataset.shuffle(seed=29).select(range(10)), input_shape=input_ids.shape, input_dtype=input_ids.dtype,
                 # model=model_fp16, calib_dataloader=evaluator.dataset, input_shape=input_ids.shape, input_dtype=input_ids.dtype,
-                calib_steps=100, collate_fn=lambda x: x['input_ids'].to(CFG_DEVICE).unsqueeze(0), verbose=1,
+                calib_steps=10, collate_fn=lambda x: x['input_ids'].to(CFG_DEVICE).unsqueeze(0), verbose=1,
                 device=CFG_DEVICE, platform=CFG_PLATFORM, setting=QUANT_SETTING)
 
             """evaluate"""
@@ -196,8 +198,8 @@ with ENABLE_CUDA_KERNEL():
             model_forward_function = lambda input_tensor: torch.tensor(
                 executor(*[input_tensor])[0])
             acc_fp8 = evaluator.evaluate_ppq(model_forward_function)
-            tp1_acc[model_checkpoint]=' * FP16 PREC {top1} FP8 PREC {top5}'.format(top1=acc_fp16,top5=acc_fp8)
-            # tp1_acc[model_checkpoint]=' * FP16 PREC {top1} FP8 PREC {top5}'.format(top1='hello',top5=acc_fp8)
+            # tp1_acc[model_checkpoint]=' * FP16 PREC {top1} FP8 PREC {top5}'.format(top1=acc_fp16,top5=acc_fp8)
+            tp1_acc[model_checkpoint]=' * FP16 PREC {top1} FP8 PREC {top5}'.format(top1='hello',top5=acc_fp8)
             print(model_checkpoint,tp1_acc[model_checkpoint])
 
             """analysis"""

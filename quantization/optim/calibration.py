@@ -15,6 +15,8 @@ from tqdm import tqdm
 
 from .base import QuantizationOptimizationPass
 
+import time
+
 
 class RuntimeCalibrationPass(QuantizationOptimizationPass):
     """
@@ -111,10 +113,15 @@ class RuntimeCalibrationPass(QuantizationOptimizationPass):
         with tqdm(total=self._calib_steps, desc=desc) as progressing_bar:
             for calib_epoch in range(ceil(self._calib_steps / len(dataloader))):
                 for data in dataloader:
+                    start=time.time()
                     if self._collate_fn is not None:
                         data = self._collate_fn(data)
+                    # mid=time.time()
+                    # print('_collate_fn运行时间为: %s Seconds'%(mid-start))
                     executor.forward(inputs=data, hooks=hooks,
                         output_names=output_names)
+                    # end=time.time()
+                    # print('forward运行时间为: %s Seconds'%(end-mid))
                     progressing_bar.update()
                     calib_step += 1
                     if calib_step >= self._calib_steps: break

@@ -29,45 +29,46 @@ class TensorwiseFloatingQuantImpl(Function):
                 exponet_bits: int, mantissa_bits: int,
                 quant_min: float, quant_max: float,
                 rounding: RoundingPolicy) -> torch.Tensor:
+
         scales, offsets = scales.to(tensor.device), offsets.to(tensor.device)
         if not PPQ_CONFIG.USING_CUDA_KERNEL or not tensor.is_cuda:
             # quantization function, pytorch implmentation
-            # raise NotImplementedError('This Feature must run with PPQ Cuda Kernel.')
-            Unscaled_FP32 = tensor / scales
+            raise NotImplementedError('This Feature must run with PPQ Cuda Kernel.')
+            # Unscaled_FP32 = tensor / scales
 
-            # helper_value = Unscaled_FP32;
-            exponent_min  = -(1 << (exponet_bits - 1)) + 1
-            exponent_max  = (1 << (exponet_bits - 1))
+            # # helper_value = Unscaled_FP32;
+            # exponent_min  = -(1 << (exponet_bits - 1)) + 1
+            # exponent_max  = (1 << (exponet_bits - 1))
 
-            fp32_sign = 0
-            fp32_exp  = (exponent_max + 127) << 23
-            fp32_mantissa = ~(0x007FFFFF >> mantissa_bits) & 0x007FFFFF;
-            helper_data = fp32_sign + fp32_mantissa + fp32_exp
-            theoretical_maximum = uint2fp(helper_data)
+            # fp32_sign = 0
+            # fp32_exp  = (exponent_max + 127) << 23
+            # fp32_mantissa = ~(0x007FFFFF >> mantissa_bits) & 0x007FFFFF;
+            # helper_data = fp32_sign + fp32_mantissa + fp32_exp
+            # theoretical_maximum = uint2fp(helper_data)
 
-            tensor = torch.clamp(Unscaled_FP32,max(quant_min, -theoretical_maximum), 
-                    min(quant_max, theoretical_maximum))
+            # tensor = torch.clamp(Unscaled_FP32,max(quant_min, -theoretical_maximum), 
+            #         min(quant_max, theoretical_maximum))
 
-            def elew(Unscaled_FP32):
-                helper_data   = fp2uint(Unscaled_FP32);
-                fp32_sign     = helper_data & 0x80000000;
-                fp32_exp      = helper_data & 0x7F800000;
-                fp32_mantissa = helper_data & 0x007FFFFF;
+            # def elew(Unscaled_FP32):
+            #     helper_data   = fp2uint(Unscaled_FP32);
+            #     fp32_sign     = helper_data & 0x80000000;
+            #     fp32_exp      = helper_data & 0x7F800000;
+            #     fp32_mantissa = helper_data & 0x007FFFFF;
                 
-                if (((fp32_exp >> 23) - 127) < exponent_min + 1):
-                    min_subnormal = 1.0 / (1 << ((1 << (exponet_bits - 1)) + mantissa_bits - 2))
-                    tensor =  round(Unscaled_FP32 / min_subnormal) * min_subnormal
-                else:
-                    rounding_helper_data = ((fp32_mantissa << (mantissa_bits)) & 0x007FFFFF) + 0x3F800000
-                    round_bit = round(uint2fp(rounding_helper_data) - 1)
+            #     if (((fp32_exp >> 23) - 127) < exponent_min + 1):
+            #         min_subnormal = 1.0 / (1 << ((1 << (exponet_bits - 1)) + mantissa_bits - 2))
+            #         tensor =  round(Unscaled_FP32 / min_subnormal) * min_subnormal
+            #     else:
+            #         rounding_helper_data = ((fp32_mantissa << (mantissa_bits)) & 0x007FFFFF) + 0x3F800000
+            #         round_bit = round(uint2fp(rounding_helper_data) - 1)
 
-                    fp32_mantissa = ((fp32_mantissa >> (23 - mantissa_bits)) + round_bit) << (23 - mantissa_bits)
-                    helper_data = fp32_sign + fp32_mantissa + fp32_exp
-                    tensor = np.clip(uint2fp(helper_data), quant_min, quant_max)
-                return tensor
+            #         fp32_mantissa = ((fp32_mantissa >> (23 - mantissa_bits)) + round_bit) << (23 - mantissa_bits)
+            #         helper_data = fp32_sign + fp32_mantissa + fp32_exp
+            #         tensor = np.clip(uint2fp(helper_data), quant_min, quant_max)
+            #     return tensor
             
 
-            return tensor.apply_(elew)
+            # return tensor.apply_(elew)
         
         else:
             from ppq.core import CUDA
@@ -113,45 +114,45 @@ class ChannelwiseFloatingQuantImpl(Function):
         scales, offsets = scales.to(tensor.device), offsets.to(tensor.device)
         if not PPQ_CONFIG.USING_CUDA_KERNEL or not tensor.is_cuda:
             # generate a shape that likes [1, 1, -1, 1], the only -1 is at channel axe.
-            # raise NotImplementedError('This Feature must run with PPQ Cuda Kernel.')
-            shape = [1 if axis != channel_axis else -1 for axis in range(tensor.ndim)]
-            scale = scales.view(shape)
+            raise NotImplementedError('This Feature must run with PPQ Cuda Kernel.')
+            # shape = [1 if axis != channel_axis else -1 for axis in range(tensor.ndim)]
+            # scale = scales.view(shape)
 
-            Unscaled_FP32 = tensor / scale
+            # Unscaled_FP32 = tensor / scale
 
-            # helper_value = Unscaled_FP32;
-            exponent_min  = -(1 << (exponet_bits - 1)) + 1
-            exponent_max  = (1 << (exponet_bits - 1))
+            # # helper_value = Unscaled_FP32;
+            # exponent_min  = -(1 << (exponet_bits - 1)) + 1
+            # exponent_max  = (1 << (exponet_bits - 1))
 
-            fp32_sign = 0
-            fp32_exp  = (exponent_max + 127) << 23
-            fp32_mantissa = ~(0x007FFFFF >> mantissa_bits) & 0x007FFFFF;
-            helper_data = fp32_sign + fp32_mantissa + fp32_exp
-            theoretical_maximum = uint2fp(helper_data)
+            # fp32_sign = 0
+            # fp32_exp  = (exponent_max + 127) << 23
+            # fp32_mantissa = ~(0x007FFFFF >> mantissa_bits) & 0x007FFFFF;
+            # helper_data = fp32_sign + fp32_mantissa + fp32_exp
+            # theoretical_maximum = uint2fp(helper_data)
 
-            tensor = torch.clamp(Unscaled_FP32,max(quant_min, -theoretical_maximum), 
-                min(quant_max, theoretical_maximum))
+            # tensor = torch.clamp(Unscaled_FP32,max(quant_min, -theoretical_maximum), 
+            #     min(quant_max, theoretical_maximum))
 
-            def elew(Unscaled_FP32):
-                helper_data   = fp2uint(Unscaled_FP32);
-                fp32_sign     = helper_data & 0x80000000;
-                fp32_exp      = helper_data & 0x7F800000;
-                fp32_mantissa = helper_data & 0x007FFFFF;
+            # def elew(Unscaled_FP32):
+            #     helper_data   = fp2uint(Unscaled_FP32);
+            #     fp32_sign     = helper_data & 0x80000000;
+            #     fp32_exp      = helper_data & 0x7F800000;
+            #     fp32_mantissa = helper_data & 0x007FFFFF;
                 
-                if (((fp32_exp >> 23) - 127) < exponent_min + 1):
-                    min_subnormal = 1.0 / (1 << ((1 << (exponet_bits - 1)) + mantissa_bits - 2))
-                    tensor =  round(Unscaled_FP32 / min_subnormal) * min_subnormal
-                else:
-                    rounding_helper_data = ((fp32_mantissa << (mantissa_bits)) & 0x007FFFFF) + 0x3F800000
-                    round_bit = round(uint2fp(rounding_helper_data) - 1)
+            #     if (((fp32_exp >> 23) - 127) < exponent_min + 1):
+            #         min_subnormal = 1.0 / (1 << ((1 << (exponet_bits - 1)) + mantissa_bits - 2))
+            #         tensor =  round(Unscaled_FP32 / min_subnormal) * min_subnormal
+            #     else:
+            #         rounding_helper_data = ((fp32_mantissa << (mantissa_bits)) & 0x007FFFFF) + 0x3F800000
+            #         round_bit = round(uint2fp(rounding_helper_data) - 1)
 
-                    fp32_mantissa = ((fp32_mantissa >> (23 - mantissa_bits)) + round_bit) << (23 - mantissa_bits)
-                    helper_data = fp32_sign + fp32_mantissa + fp32_exp
-                    tensor = np.clip(uint2fp(helper_data), quant_min, quant_max)
-                return tensor
+            #         fp32_mantissa = ((fp32_mantissa >> (23 - mantissa_bits)) + round_bit) << (23 - mantissa_bits)
+            #         helper_data = fp32_sign + fp32_mantissa + fp32_exp
+            #         tensor = np.clip(uint2fp(helper_data), quant_min, quant_max)
+            #     return tensor
             
 
-            return tensor.apply_(elew)
+            # return tensor.apply_(elew)
         else:
             from ppq.core import CUDA
             quantized = CUDA.FloatingQuantize_C(
@@ -175,9 +176,9 @@ def PPQFloatingQuantFunction(
     tensor: torch.Tensor, config: TensorQuantizationConfig) -> torch.Tensor:
     if not PPQ_CONFIG.USING_CUDA_KERNEL:
         raise PermissionError('PPQ Floating Quant Function require PPQ_CONFIG.USING_CUDA_KERNEL = True')
-    # if not tensor.is_cuda:
-    #     raise PermissionError('PPQ Floating Quant Function requires tensor device to be cuda, '
-    #                           'CPU floating quantization is not implemented yet.')
+    if not tensor.is_cuda:
+        raise PermissionError('PPQ Floating Quant Function requires tensor device to be cuda, '
+                              'CPU floating quantization is not implemented yet.')
 
     """PPQ 核心量化函数，没啥好说的了吧，这个玩意既做 quant 也做 dequant"""
     if not QuantizationStates.is_activated(config.state): return tensor

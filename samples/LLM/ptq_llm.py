@@ -39,8 +39,8 @@ CFG_BATCHSIZE = 16                             # 测试与calib时的 batchsize
 CFG_INPUT_SHAPE = (CFG_BATCHSIZE, 3, 224, 224) # 用来确定模型输入的尺寸，好像 imagenet 都是这个尺寸
 CFG_VALIDATION_DIR = '/data/val'   # 用来读取 validation dataset
 CFG_TRAIN_DIR = '/data/train'        # 用来读取 train dataset，注意该集合将被用来 calibrate 你的模型
-# CFG_PLATFORM = TargetPlatform.TRT_FP8     # 用来指定目标平台
-CFG_PLATFORM = TargetPlatform.PPL_CUDA_INT8  
+CFG_PLATFORM = TargetPlatform.TRT_FP8     # 用来指定目标平台
+# CFG_PLATFORM = TargetPlatform.PPL_CUDA_INT8  
 CFG_DUMP_PATH = 'Output/'                      # 所有模型保存的路径名
 # CACHE_DIR = ''
 QUANT_SETTING = QuantizationSettingFactory.default_setting() # 用来指定量化配置
@@ -69,8 +69,8 @@ QUANT_SETTING = QuantizationSettingFactory.default_setting() # 用来指定量�
 # QUANT_SETTING.lsq_optimization_setting.is_scale_trainable = True
 # QUANT_SETTING.lsq_optimization_setting.collecting_device  = 'cpu'
 model_list=[
-    'facebook/opt-125m',
-    # 'facebook/opt-350m',
+    # 'facebook/opt-125m',
+    'facebook/opt-350m',
     # 'facebook/opt-1.3b',
     # 'facebook/opt-2.7b',
     # 'facebook/opt-6.7b',
@@ -145,13 +145,14 @@ with ENABLE_CUDA_KERNEL():
     if __name__ == '__main__':
 
         dataset = load_dataset('lambada', split='validation')
-        dataset = dataset.shuffle(seed=42).select(range(1000))
+        dataset = dataset.shuffle(seed=42).select(range(20))
         print(len(dataset),dataset[0])
 
         for model_checkpoint in model_list:
             # tokenizer = transformers.LlamaTokenizer.from_pretrained(model_checkpoint)
             # tokenizer.pad_token = "[PAD]"
             model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32, device_map="auto") #.cuda()
+            # model_fp16_cpu = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32)
             print(model_fp16.hf_device_map)
             # model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32).cuda()
 
@@ -184,9 +185,9 @@ with ENABLE_CUDA_KERNEL():
             # eval_dataloader = DataLoader(small_eval_dataset, batch_size=CFG_BATCHSIZE)
 
             """Eval the original model"""
-            acc_fp16 = evaluator.evaluate(model_fp16)
-            tp1_acc[model_checkpoint]=' * FP16 PREC {top1} '.format(top1=acc_fp16)
-            print(model_checkpoint,tp1_acc[model_checkpoint])
+            # acc_fp16 = evaluator.evaluate(model_fp16)
+            # tp1_acc[model_checkpoint]=' * FP16 PREC {top1} '.format(top1=acc_fp16)
+            # print(model_checkpoint,tp1_acc[model_checkpoint])
 
             """quantize"""
             for batch in evaluator.dataset:
@@ -194,11 +195,24 @@ with ENABLE_CUDA_KERNEL():
             # input_list = [k for k in batch if k!="labels" ]
             # collate_fn  = lambda x: {k:x[k].cuda() for k in input_list}
             input_ids = batch['input_ids'].to(CFG_DEVICE).unsqueeze(0)
+            # model_fp16.eval()
+            # torch.onnx.export(
+            #     model=model_fp16, args=input_ids, 
+            #     verbose=True, f='gpu.model', opset_version=11,
+            # )
+            model_fp16_cpu.eval()
+            input_ids = input_ids.to('cpu')
+            torch.onnx.export(
+                model=model_fp16_cpu, args=input_ids, 
+                verbose=True, f='cpu.model', opset_version=11,
+            )
+            break
+
             ppq_quant_ir = quantize_torch_model(
-                model=model_fp16, calib_dataloader=evaluator.dataset.shuffle(seed=29).select(range(100)), input_shape=input_ids.shape, input_dtype=input_ids.dtype,
+                model=model_fp16, calib_dataloader=evaluator.dataset.shuffle(seed=29).select(range(20)), input_shape=input_ids.shape, input_dtype=input_ids.dtype,
                 # model=model_fp16, calib_dataloader=evaluator.dataset, input_shape=input_ids.shape, input_dtype=input_ids.dtype,
-                calib_steps=100, collate_fn=lambda x: x['input_ids'].to(CFG_DEVICE).unsqueeze(0), verbose=1,
-                device=CFG_DEVICE, platform=CFG_PLATFORM, setting=QUANT_SETTING)
+                calib_steps=20, collate_fn=lambda x: x['input_ids'].to(CFG_DEVICE).unsqueeze(0), verbose=1,
+                device=CFG_DEVICE, platform=CFG_PLATFORM, setting=QUANT_SETTING, onnx_export_file="onnx.model")
 
             """evaluate"""
             executor = TorchExecutor(graph=ppq_quant_ir, device=CFG_DEVICE)

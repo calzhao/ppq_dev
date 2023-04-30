@@ -62,11 +62,25 @@ def FORCE_CONVERT_DEVICE(value: torch.Tensor, device: str) -> torch.Tensor:
     return value.to(device=device, copy=True)
 
 def VALUE_TO_EXECUTING_DEVICE(op: Operation, ctx: TorchBackendContext, values: List[torch.Tensor]) -> List[torch.Tensor]:
+    # try:
     if ctx is None: device = values[0].device
     else: device = ctx.executing_device
     for idx, (plat, value) in enumerate(zip(op.socket.in_plat, values)):
+        # print(device, idx, value.device, value.shape)
         if value is None: continue
         if plat == TargetPlatform.SOI or op.platform == TargetPlatform.SOI:
+            # print(idx)
             values[idx] = value.cpu()
         else: values[idx] = value.to(device)
     return values
+    # except Exception:
+    #     # device= 'cpu'
+    #     # for idx, (plat, value) in enumerate(zip(op.socket.in_plat, values)):
+    #     #     print(device, idx, value.device, value.shape)
+
+    #     #     if value is None: continue
+    #     #     if plat == TargetPlatform.SOI or op.platform == TargetPlatform.SOI:
+    #     #         # print(idx)
+    #     #         values[idx] = value.cpu()
+    #     #     else: values[idx] = value.to(device)
+    #     return values

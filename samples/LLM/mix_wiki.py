@@ -32,6 +32,11 @@ from tqdm import tqdm
 import torch.nn.functional as F
 import re
 import numpy as np
+from lm_eval import utils
+from lm_eval.metrics import mean, weighted_perplexity, weighted_mean, bits_per_byte
+import re
+import random
+
 
 # PPQ_CONFIG.PPQ_DEBUG=True
 
@@ -45,6 +50,7 @@ CFG_PLATFORM_INT8 = TargetPlatform.PPL_CUDA_INT8
 CFG_PLATFORM_MIX = TargetPlatform.PPL_CUDA_MIX 
 CFG_DUMP_PATH = 'Output/'                      # 所有模型保存的路径名
 QUANT_SETTING = QuantizationSettingFactory.default_setting() # 用来指定量化配置
+CALIB_STEP = 100
 
 """QAT setting"""
 # ------------------------------------------------------------
@@ -63,10 +69,15 @@ model_list=[
     # 'facebook/opt-350m',
     # 'facebook/opt-1.3b',
     # 'facebook/opt-2.7b',
-    'facebook/opt-6.7b',
-    'facebook/opt-13b',
-    'facebook/opt-30b',
+    # 'facebook/opt-6.7b',
+    # 'facebook/opt-13b',
+    # 'facebook/opt-30b',
     # 'facebook/opt-66b',
+
+    'facebook/opt-6.7b',
+    'facebook/opt-2.7b',
+    # 'facebook/opt-1.3b',
+    # 'facebook/opt-350m',
 ]
 # seq = ["input_ids", "attention_mask", "token_type_ids", 
 #         "position_ids", "head_mask", "inputs_embeds", 
@@ -79,74 +90,68 @@ class Evaluator:
         self.tokenizer = tokenizer
         self.device = device
         self._model_call=_model_call
-        
-        def tokenize_function(examples):
-            out_doc = self._process_doc(examples)
-            out_doc['context_enc'] = self.tokenizer(self.doc_to_text(out_doc),truncation=True)
-            out_doc['continuation_enc'] = self.tokenizer(self.doc_to_target(out_doc),truncation=True)
-            return out_doc
-        
-        self.dataset = self.dataset.map(tokenize_function, batched=False)
-        # self.dataset.set_format(type='torch', columns=['input_ids','attention_mask','context_enc','continuation_enc'])
+        self.eot_token_id = self.tokenizer.eos_token_id
 
-        def set_padding(examples):
-            # print(examples)
-            context_enc = max(len(elem['input_ids']) for elem in examples['context_enc'])
-            # print([max(map(len, ele['input_ids'])) for ele in examples['continuation_enc']])
-            continuation_enc = max([max(map(len, ele['input_ids'])) for ele in examples['continuation_enc'] ])
-            self.padding_length = context_enc+continuation_enc+20
-            print(context_enc,continuation_enc)
-            return None
-        self.dataset.map(set_padding, batched=True)
+        trainenc = tokenizer("\n\n".join(dataset['text']))
+        print("nn seq",tokenizer("\n\n"))
+        print("text length",len(trainenc['input_ids']))
 
-        print(self.padding_length, self.dataset[0])
+        random.seed(0)
+        trainloader = []
+        self.seqlen=_model_call.config.max_position_embeddings
+        nsamples = 128
+        for _ in range(nsamples):
+            i = random.randint(0, len(trainenc.input_ids) - self.seqlen - 1)
+            j = i + self.seqlen
+            inp = trainenc.input_ids[i:j]
+            trainloader.append(inp)
+        # return trainloader, testenc
+        self.dataset = trainloader
+        print("dataset len",len(self.dataset))
 
-    def _process_doc(self, doc):
-        ctx = doc["ctx_a"] + " " + doc["ctx_b"].capitalize()
-        out_doc = {
-            "query": self.preprocess(doc["activity_label"] + ": " + ctx),
-            "choices": [" "+self.preprocess(ending) for ending in doc["endings"]],
-            "gold": int(doc["label"]),
-        }
-        return out_doc
+        self.calib_dataloader = random.sample(trainloader, CALIB_STEP)
 
-    def preprocess(self, text):
-        text = text.strip()
-        # NOTE: Brackets are artifacts of the WikiHow dataset portion of HellaSwag.
-        text = text.replace(" [title]", ". ")
-        text = re.sub("\\[.*?\\]", "", text)
-        text = text.replace("  ", " ")
-        return text
+        self.padding_length=self.seqlen
+        print("padding_length",self.padding_length)
 
-    def doc_to_text(self, doc):
-        return doc["query"]
 
-    def doc_to_target(self, doc):
-        # print("target1 ", " " + doc["choices"][0])
-        return doc["choices"]
+    @property
+    def max_length(self):
+        try:
+            return self._model_call.config.n_ctx
+        except AttributeError:
+            # gptneoconfig doesn't have n_ctx apparently
+            return self._model_call.config.max_position_embeddings
 
+    @torch.no_grad()
+    def loglikelihood_rolling(self, token, foward_func=None,sample=False):
+        # TODO: Implement caching once we've confirmed the perplexity implementation
+        # TODO: automatic batch size detection for vectorization
+
+        rolling_token_windows = list(
+            map(
+                utils.make_disjoint_window,
+                utils.get_rolling_token_windows(
+                    token_list=token,
+                    prefix_token=self.eot_token_id,
+                    max_seq_len=self.max_length,
+                    context_len=1,
+                ),
+            )
+        )
+        string_nll = self._loglikelihood_tokens( *rolling_token_windows[0],foward_func=foward_func, sample=sample)
+        if sample:
+            return string_nll
+
+        string_nll = string_nll[0]
+
+        return string_nll
+
+    @torch.no_grad()
     def _loglikelihood_tokens(self, context_enc, continuation_enc, foward_func=None, sample=False):
 
         padding_length = self.padding_length
 
-        # because vectorizing is annoying, we first convert each (context, continuation) pair to padded
-        # tensors, then we pack them together into a batch, call the model, and then pick it all apart
-        # again because vectorizing is annoying
-
-        # sanity check
-        # assert len(context_enc) > 0
-        # assert len(continuation_enc) > 0
-
-        # print("enc shape ",len(context_enc),len(continuation_enc))
-        # print(context_enc,continuation_enc)
-        # how this all works:
-        #          CTX      CONT
-        # inp    0 1 2 3|4 5 6 7 8 9   <- last token is deleted by inp[:, :-1]
-        # gpt2    \               \
-        # logits   1 2 3|4 5 6 7 8 9   <- the ctx half gets tossed out by the
-        # cont_toks      4 5 6 7 8 9      [:, -len(continuation_enc):, :self.vocab_size] slice
-
-        # when too long to fit in context, truncate from the left
         inp = torch.tensor(
             (context_enc + continuation_enc)[:][:-1],
             dtype=torch.long,
@@ -218,66 +223,51 @@ class Evaluator:
     def sample_batch(self):
         return torch.ones((1,self.padding_length),dtype=torch.int32)
 
+    @torch.no_grad()
     def my_collate_fn(self, batch):
-        context_enc = batch['context_enc']['input_ids']
-        continuation_enc1 = batch['continuation_enc']['input_ids'][0]
-        input1 = self._loglikelihood_tokens(context_enc,continuation_enc1,sample=True)
+        context_enc = batch
+        input1 = self.loglikelihood_rolling(context_enc,sample=True)
         return input1.to(self.device)
 
     @torch.no_grad()
     def evaluate(self, model):
         model.eval()
         # The task is to predict the last word of the input.
-        total, hit = 0, 0
+        outputs = []
         for batch in self.dataset:
-            context_enc = batch['context_enc']['input_ids']
-            label = batch['gold']
-            outputs = []
-            for continuation_enc in batch['continuation_enc']['input_ids']:
-                output = self._loglikelihood_tokens(context_enc,continuation_enc)[0]
-                outputs.append(output)
-                # print(torch.sum(last_token_logits),last_token_logits)
-            pred = np.argmax(outputs)
-            # print(pred, label)
-            total += 1
-            hit += pred == label
-        acc = hit / total
-        return acc
-    
+            # context_enc = batch['enc']['input_ids']
+            # print(batch)
+            # words = self.count_words(batch['raw'])
+            context_enc = batch
+            # print("context_enc",context_enc)
+            words = len(batch)
+            loglikelihood = self.loglikelihood_rolling(context_enc)
+            # print(loglikelihood,words)
+            outputs.append((loglikelihood, words))
+        # acc = hit / total
+        return weighted_perplexity(outputs)
+
+    @torch.no_grad()
     def evaluate_ppq(self, fw_func):
         # The task is to predict the last word of the input.
-        total, hit = 0, 0
+        outputs = []
         for batch in self.dataset:
-
-            context_enc = batch['context_enc']['input_ids']
-            label = batch['gold']
-            outputs = []
-            for continuation_enc in batch['continuation_enc']['input_ids']:
-                output = self._loglikelihood_tokens(context_enc,continuation_enc,foward_func=fw_func)[0]
-                outputs.append(output)
-                # print(torch.sum(last_token_logits),last_token_logits)
-            pred = np.argmax(outputs)
-            # print(pred, label)
-            total += 1
-            hit += pred == label
-
-        acc = hit / total
-        return acc
+            context_enc = batch
+            words = len(batch)
+            loglikelihood = self.loglikelihood_rolling(context_enc,foward_func=fw_func)
+            outputs.append((loglikelihood, words))
+        # acc = hit / total
+        return weighted_perplexity(outputs)
 
 with ENABLE_CUDA_KERNEL():
     if __name__ == '__main__':
 
-        dataset = load_dataset('hellaswag', split='validation')
-        dataset = dataset.shuffle(seed=42).select(range(10000))
+        dataset = load_dataset('wikitext', 'wikitext-2-raw-v1',split='validation')
+        # dataset = dataset.shuffle(seed=42).select(range(1000))
         print(len(dataset),dataset[0])
 
 
         for model_checkpoint in model_list:
-            # model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32, device_map="auto") 
-
-            """Preprocessing the data"""
-            # tokenizer = transformers.LlamaTokenizer.from_pretrained(model_checkpoint)
-            # tokenizer.pad_token = "[PAD]"
             model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32, device_map="auto") #.cuda()
             print(model_fp16.hf_device_map)
             # model_fp16 = AutoModelForCausalLM.from_pretrained(model_checkpoint, torch_dtype=torch.float32).cuda()
@@ -294,25 +284,31 @@ with ENABLE_CUDA_KERNEL():
             tp1_acc[model_checkpoint]=' * FP16 PREC {top1} '.format(top1=acc_fp16)
             print(model_checkpoint,tp1_acc[model_checkpoint])
 
+            # """quantize"""
             batch = evaluator.sample_batch()
             # input_list = [k for k in batch if k!="labels" ]
             # collate_fn  = lambda x: {k:x[k].cuda() for k in input_list}
             input_ids = batch.to(CFG_DEVICE)
+            # ppq_quant_ir_FP8 = quantize_torch_model(
+            #     model=model_fp16, calib_dataloader=evaluator.calib_dataloader, input_shape=input_ids.shape, input_dtype=input_ids.dtype,
+            #     # model=model_fp16, calib_dataloader=evaluator.dataset, input_shape=input_ids.shape, input_dtype=input_ids.dtype,
+            #     calib_steps=CALIB_STEP, collate_fn=evaluator.my_collate_fn, verbose=1,
+            #     device=CFG_DEVICE, platform=CFG_PLATFORM_FP8, setting=QUANT_SETTING)
 
             """quantize int"""
-            if os.path.exists(model_checkpoint[-6:]+'_layer_int8_hella.npy'):
-                reports_int8 = np.load(model_checkpoint[-6:]+'_layer_int8_hella.npy',allow_pickle=True)
+            if os.path.exists(model_checkpoint[-6:]+'_layer_int8_wiki_v2.npy'):
+                reports_int8 = np.load(model_checkpoint[-6:]+'_layer_int8_wiki_v2.npy',allow_pickle=True)
                 reports_int8 = reports_int8.item()
             else:
                 ppq_quant_ir_INT8 = quantize_torch_model(
-                    model=model_fp16, calib_dataloader=evaluator.dataset.shuffle(seed=29).select(range(100)), input_shape=input_ids.shape, input_dtype=input_ids.dtype,
+                    model=model_fp16, calib_dataloader=evaluator.calib_dataloader, input_shape=input_ids.shape, input_dtype=input_ids.dtype,
                     # model=model_fp16, calib_dataloader=evaluator.dataset, input_shape=input_ids.shape, input_dtype=input_ids.dtype,
-                    calib_steps=100, collate_fn=evaluator.my_collate_fn, verbose=1,
+                    calib_steps=CALIB_STEP, collate_fn=evaluator.my_collate_fn, verbose=1,
                     device=CFG_DEVICE, platform=CFG_PLATFORM_INT8, setting=QUANT_SETTING)
-                reports_int8 = layerwise_error_analyse(
+                reports_int8 = layerwise_error_analyse_v2(
                     graph=ppq_quant_ir_INT8, running_device=CFG_DEVICE, collate_fn=evaluator.my_collate_fn, 
                     dataloader=evaluator.dataset)
-                np.save(model_checkpoint[-6:]+'_layer_int8_hella',reports_int8)
+                np.save(model_checkpoint[-6:]+'_layer_int8_wiki_v2',reports_int8)
                 """evaluate"""
                 executor = TorchExecutor(graph=ppq_quant_ir_INT8, device=CFG_DEVICE)
                 model_forward_function = lambda input_tensor: torch.tensor(
@@ -324,21 +320,21 @@ with ENABLE_CUDA_KERNEL():
 
                 executor = None
                 ppq_quant_ir_INT8 = None
- 
+
             """quantize fp"""
-            if os.path.exists(model_checkpoint[-6:]+'_layer_fp8_hella.npy'):
-                reports_fp8 = np.load(model_checkpoint[-6:]+'_layer_fp8_hella.npy',allow_pickle=True)
+            if os.path.exists(model_checkpoint[-6:]+'_layer_fp8_wiki_v2.npy'):
+                reports_fp8 = np.load(model_checkpoint[-6:]+'_layer_fp8_wiki_v2.npy',allow_pickle=True)
                 reports_fp8 = reports_fp8.item()
             else:
                 ppq_quant_ir_FP8 = quantize_torch_model(
-                    model=model_fp16, calib_dataloader=evaluator.dataset.shuffle(seed=29).select(range(100)), input_shape=input_ids.shape, input_dtype=input_ids.dtype,
+                    model=model_fp16, calib_dataloader=evaluator.calib_dataloader, input_shape=input_ids.shape, input_dtype=input_ids.dtype,
                     # model=model_fp16, calib_dataloader=evaluator.dataset, input_shape=input_ids.shape, input_dtype=input_ids.dtype,
-                    calib_steps=100, collate_fn=evaluator.my_collate_fn, verbose=1,
+                    calib_steps=CALIB_STEP, collate_fn=evaluator.my_collate_fn, verbose=1,
                     device=CFG_DEVICE, platform=CFG_PLATFORM_FP8, setting=QUANT_SETTING)
-                reports_fp8 = layerwise_error_analyse(
+                reports_fp8 = layerwise_error_analyse_v2(
                     graph=ppq_quant_ir_FP8, running_device=CFG_DEVICE, collate_fn=evaluator.my_collate_fn, 
                     dataloader=evaluator.dataset) 
-                np.save(model_checkpoint[-6:]+'_layer_fp8_hella',reports_fp8)  
+                np.save(model_checkpoint[-6:]+'_layer_fp8_wiki_v2',reports_fp8)  
                 """evaluate"""
                 executor = TorchExecutor(graph=ppq_quant_ir_FP8, device=CFG_DEVICE)
                 model_forward_function = lambda input_tensor: torch.tensor(
@@ -350,21 +346,6 @@ with ENABLE_CUDA_KERNEL():
 
                 executor = None
                 ppq_quant_ir_FP8 = None
-
-            # """analysis"""
-            # # reports_int8 = layerwise_error_analyse(
-            # #     graph=ppq_quant_ir_INT8, running_device=CFG_DEVICE, collate_fn=lambda x: x['input_ids'].to(CFG_DEVICE).unsqueeze(0), 
-            # #     dataloader=evaluator.dataset)
-            # # reports_fp8 = layerwise_error_analyse(
-            # #     graph=ppq_quant_ir_FP8, running_device=CFG_DEVICE, collate_fn=lambda x: x['input_ids'].to(CFG_DEVICE).unsqueeze(0), 
-            # #     dataloader=evaluator.dataset)    
-            
-            # # np.save(model_checkpoint[-4:]+'_layer_int8_aligned',reports_int8)
-            # # np.save(model_checkpoint[-4:]+'_layer_fp8',reports_fp8)
-            # reports_int8 = np.load(model_checkpoint[-4:]+'_layer_int8_aligned.npy',allow_pickle=True)
-            # reports_fp8 = np.load(model_checkpoint[-4:]+'_layer_fp8.npy',allow_pickle=True)
-            # reports_int8 = reports_int8.item()
-            # reports_fp8 = reports_fp8.item()
 
             """set the final model"""
             #从大到小排序单层误差
@@ -379,18 +360,15 @@ with ENABLE_CUDA_KERNEL():
                 if reports_int8[op_name]>reports_fp8[op_name]:
                     QUANT_SETTING.dispatching_table.append(operation=op_name, platform=TargetPlatform.TRT_FP8)
                     fp_cnt += 1
-            tp1_acc[model_checkpoint]=' * op cnt {top1} fp cnt {top5}'.format(top1=op_cnt, top5=fp_cnt)
+            tp1_acc[model_checkpoint]=' * op cnt {top1} fp cnt {top5} fp percent {pct}'.format(
+                top1=op_cnt, top5=fp_cnt, pct=fp_cnt/op_cnt)
             print(model_checkpoint,tp1_acc[model_checkpoint])
 
-            # 将前十个误差最大的层送上 FP32
-            # for op_name, _ in sensitivity[: 5]:
-            #     print(op_name)
-            #     QUANT_SETTING.dispatching_table.append(operation=op_name, platform=TargetPlatform.TRT_FP8)
 
-            ppq_quant_ir = quantize_torch_model(
-                model=model_fp16, calib_dataloader=evaluator.dataset.shuffle(seed=29).select(range(100)), input_shape=input_ids.shape, input_dtype=input_ids.dtype,
-                calib_steps=100, collate_fn=evaluator.my_collate_fn, verbose=1,
-                device=CFG_DEVICE, platform=CFG_PLATFORM_MIX, setting=QUANT_SETTING)
+            ppq_quant_ir = quantize_torch_model( model=model_fp16, calib_dataloader=evaluator.calib_dataloader, 
+                input_shape=input_ids.shape, input_dtype=input_ids.dtype, calib_steps=CALIB_STEP, 
+                collate_fn=evaluator.my_collate_fn, verbose=1, device=CFG_DEVICE, platform=CFG_PLATFORM_MIX, 
+                setting=QUANT_SETTING)
 
             """evaluate"""
             executor = TorchExecutor(graph=ppq_quant_ir, device=CFG_DEVICE)
@@ -400,11 +378,13 @@ with ENABLE_CUDA_KERNEL():
             tp1_acc[model_checkpoint]=' *  MIX PREC {top5}'.format(top5=acc_mix8)
             print(model_checkpoint,tp1_acc[model_checkpoint])
 
-            tp1_acc[model_checkpoint]=' * INT8 PREC {top1} FP8 PREC {top3} MIX PREC {top5}'.format(top1=acc_int8, top3=acc_fp8 ,top5=acc_mix8)
+            tp1_acc[model_checkpoint]=' FP16 PREC {top0} * INT8 PREC {top1} FP8 PREC {top3} MIX PREC {top5}'.format(
+                top0=acc_fp16, top1=acc_int8, top3=acc_fp8 ,top5=acc_mix8)
             print(model_checkpoint,tp1_acc[model_checkpoint])
             
             executor = None
             ppq_quant_ir = None
+
 
         print(tp1_acc)
     else:

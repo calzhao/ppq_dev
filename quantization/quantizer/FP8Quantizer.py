@@ -129,8 +129,8 @@ class TensorRTQuantizer_FP8(BaseQuantizer):
                 conv_weight_config.policy = QuantizationPolicy(
                     QuantizationProperty.SYMMETRICAL +
                     QuantizationProperty.PER_CHANNEL + 
-                    QuantizationProperty.FLOATING +
-                    QuantizationProperty.POWER_OF_2
+                    QuantizationProperty.FLOATING 
+                    # + QuantizationProperty.POWER_OF_2
                 )
                 # 量化的 channel_axis 对于 conv 而言是 0，对于反卷积而言是 1
                 # 参数量化使用 min max observe
@@ -143,8 +143,8 @@ class TensorRTQuantizer_FP8(BaseQuantizer):
                 gemm_weight_config.policy = QuantizationPolicy(
                     QuantizationProperty.SYMMETRICAL +
                     QuantizationProperty.PER_CHANNEL +
-                    QuantizationProperty.FLOATING +
-                    QuantizationProperty.POWER_OF_2
+                    QuantizationProperty.FLOATING 
+                    # + QuantizationProperty.POWER_OF_2
                 )
                 gemm_weight_config.channel_axis = 0
                 gemm_weight_config.observer_algorithm = 'floating'
@@ -187,8 +187,8 @@ class TensorRTQuantizer_FP8(BaseQuantizer):
         return QuantizationPolicy(
             QuantizationProperty.SYMMETRICAL +
             QuantizationProperty.PER_TENSOR +
-            QuantizationProperty.FLOATING +
-            QuantizationProperty.POWER_OF_2
+            QuantizationProperty.FLOATING 
+            # + QuantizationProperty.POWER_OF_2
         )
 
     @ property

@@ -273,8 +273,8 @@ class QuantizationPolicy:
             QuantizationProperty.SYMMETRICAL | QuantizationProperty.LINEAR | QuantizationProperty.PER_CHANNEL | QuantizationProperty.POWER_OF_2,
             
             # Low Precision Float Quantization
-            # QuantizationProperty.SYMMETRICAL | QuantizationProperty.FLOATING | QuantizationProperty.PER_CHANNEL,
-            # QuantizationProperty.SYMMETRICAL | QuantizationProperty.FLOATING | QuantizationProperty.PER_TENSOR,
+            QuantizationProperty.SYMMETRICAL | QuantizationProperty.FLOATING | QuantizationProperty.PER_CHANNEL,
+            QuantizationProperty.SYMMETRICAL | QuantizationProperty.FLOATING | QuantizationProperty.PER_TENSOR,
             # QuantizationProperty.ASYMMETRICAL | QuantizationProperty.FLOATING | QuantizationProperty.PER_CHANNEL,
             # QuantizationProperty.ASYMMETRICAL | QuantizationProperty.FLOATING | QuantizationProperty.PER_TENSOR,
             QuantizationProperty.SYMMETRICAL | QuantizationProperty.FLOATING | QuantizationProperty.PER_CHANNEL | QuantizationProperty.POWER_OF_2,
