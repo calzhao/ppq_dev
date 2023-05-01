@@ -27,6 +27,7 @@ from ppq.IR.search import SearchableGraph
 from ppq.log import NaiveLogger
 from ppq.quantization.analyse import (graphwise_error_analyse,
                                       layerwise_error_analyse,
+                                      layerwise_error_analyse_v2,
                                       parameter_analyse, statistical_analyse,
                                       variable_analyse)
 from ppq.quantization.measure import (torch_cosine_similarity,
@@ -60,3 +61,5 @@ from ppq.scheduler import (AggresiveDispatcher, ConservativeDispatcher,
 from ppq.scheduler.perseus import Perseus
 from ppq.utils.round import (ppq_numerical_round, ppq_round_to_power_of_2,
                              ppq_tensor_round)
+from ppq.samples.LLM.tasks import (LambadaEvaluator, WikiEvaluator, 
+                                  HellaEvaluator, PiqaEvaluator)
