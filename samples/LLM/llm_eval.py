@@ -78,7 +78,7 @@ def parse_args():
     parser.add_argument("--model_args", default="")
     parser.add_argument("--output_path", default="out.txt")
     parser.add_argument("--calib_steps", default=100)
-    parser.add_argument("--layerwise", default='perlayer', choices=["perlayer","final"])
+    parser.add_argument("--layerwise", default='final', choices=["perlayer","final"])
     parser.add_argument("--method", default='snr', choices=["snr","cosine","mse"])
 
     return parser.parse_args()
