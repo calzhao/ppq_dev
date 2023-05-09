@@ -10,15 +10,15 @@ class PiqaEvaluator:
         self.tokenizer = tokenizer
         self.device = device
         self._model_call=_model_call
+        self.padding_length = 0
 
         def set_padding(examples):
             goal_len = max(len(elem) for elem in examples['goal'])
             choice1_len = max(len(elem) for elem in examples['sol1'])
             choice2_len = max(len(elem) for elem in examples['sol2'])
-            self.padding_length = max(goal_len+choice1_len,goal_len+choice2_len)+20
+            self.padding_length = max(max(goal_len+choice1_len,goal_len+choice2_len)+20,self.padding_length)
             return None
         self.dataset.map(set_padding, batched=True)
-        self.calib_dataloader=self.dataset.shuffle(seed=29).select(range(CALIB_STEP))
         
         def tokenize_function(examples):
             out_doc = self._process_doc(examples)
@@ -28,6 +28,7 @@ class PiqaEvaluator:
             return out_doc
         
         self.dataset = self.dataset.map(tokenize_function, batched=False)
+        self.calib_dataloader=self.dataset.shuffle(seed=29).select(range(CALIB_STEP))
         print(self.padding_length, self.dataset[0])
 
     def doc_to_text(self, doc):

@@ -16,10 +16,13 @@ class LambadaEvaluator:
             example = self.tokenizer(examples['text'],padding='longest',truncation=True)
             return example
 
-        self.dataset = self.dataset.map(tokenize_function, batched=True)
+        self.dataset = self.dataset.map(tokenize_function, batched=True, 
+                batch_size=len(self.dataset))
         # print(self.dataset[0])
         self.dataset.set_format(type='torch', columns=['input_ids','attention_mask'])
         self.calib_dataloader=self.dataset.shuffle(seed=29).select(range(CALIB_STEP))
+        # print("dataset ",[len(data['input_ids']) for data in self.dataset])
+        # print("calib dataset ",[len(data['input_ids']) for data in self.calib_dataloader])
 
     @torch.no_grad()
     def sample_batch(self):

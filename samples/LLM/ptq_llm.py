@@ -94,14 +94,25 @@ class Evaluator:
         self.tokenizer = tokenizer
         self.device = device
 
+        # def set_padding(examples):
+        #     goal_len = max(len(elem) for elem in examples['goal'])
+        #     choice1_len = max(len(elem) for elem in examples['sol1'])
+        #     choice2_len = max(len(elem) for elem in examples['sol2'])
+        #     self.padding_length = max(goal_len+choice1_len,goal_len+choice2_len)+20
+        #     return None
+        
+
         # tokenize the dataset
         def tokenize_function(examples):
             example = self.tokenizer(examples['text'],padding='longest',truncation=True)
+            print(max(len(elem) for elem in example['input_ids']))
+            print(len(example['input_ids']),[len(e) for e in example['input_ids']])
             return example
 
-        self.dataset = self.dataset.map(tokenize_function, batched=True)
-        print(self.dataset[0])
+        self.dataset = self.dataset.map(tokenize_function, batched=True, 
+                batch_size=len(self.dataset))
         self.dataset.set_format(type='torch', columns=['input_ids','attention_mask'])
+        print(self.dataset[0],len(self.dataset[0]['input_ids']),len(self.dataset[1]['input_ids']))
 
     @torch.no_grad()
     def evaluate(self, model):
@@ -145,7 +156,8 @@ with ENABLE_CUDA_KERNEL():
     if __name__ == '__main__':
 
         dataset = load_dataset('lambada', split='validation')
-        dataset = dataset.shuffle(seed=42).select(range(20))
+        # dataset = dataset.shuffle(seed=42).select(range(1000))
+        # dataset = dataset.select(range(len(dataset)))
         print(len(dataset),dataset[0])
 
         for model_checkpoint in model_list:
@@ -185,9 +197,9 @@ with ENABLE_CUDA_KERNEL():
             # eval_dataloader = DataLoader(small_eval_dataset, batch_size=CFG_BATCHSIZE)
 
             """Eval the original model"""
-            # acc_fp16 = evaluator.evaluate(model_fp16)
-            # tp1_acc[model_checkpoint]=' * FP16 PREC {top1} '.format(top1=acc_fp16)
-            # print(model_checkpoint,tp1_acc[model_checkpoint])
+            acc_fp16 = evaluator.evaluate(model_fp16)
+            tp1_acc[model_checkpoint]=' * FP16 PREC {top1} '.format(top1=acc_fp16)
+            print(model_checkpoint,tp1_acc[model_checkpoint])
 
             """quantize"""
             for batch in evaluator.dataset:
@@ -200,13 +212,15 @@ with ENABLE_CUDA_KERNEL():
             #     model=model_fp16, args=input_ids, 
             #     verbose=True, f='gpu.model', opset_version=11,
             # )
-            model_fp16_cpu.eval()
-            input_ids = input_ids.to('cpu')
-            torch.onnx.export(
-                model=model_fp16_cpu, args=input_ids, 
-                verbose=True, f='cpu.model', opset_version=11,
-            )
-            break
+            # model_fp16_cpu.eval()
+            # input_ids = input_ids.to('cpu')
+            # torch.onnx.export(
+            #     model=model_fp16_cpu, args=input_ids, 
+            #     verbose=True, f='cpu.model', opset_version=11,
+            # )
+            # break
+            print("calib dataset ",[len(data['input_ids']) for data in evaluator.dataset.shuffle(seed=29).select(range(100))])
+            
 
             ppq_quant_ir = quantize_torch_model(
                 model=model_fp16, calib_dataloader=evaluator.dataset.shuffle(seed=29).select(range(20)), input_shape=input_ids.shape, input_dtype=input_ids.dtype,

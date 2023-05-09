@@ -11,7 +11,8 @@ class HellaEvaluator:
         self.dataset = dataset
         self.tokenizer = tokenizer
         self.device = device
-        self._model_call=_model_call
+        self._model_call =_model_call
+        self.padding_length = 0
         
         def tokenize_function(examples):
             out_doc = self._process_doc(examples)
@@ -27,7 +28,7 @@ class HellaEvaluator:
             context_enc = max(len(elem['input_ids']) for elem in examples['context_enc'])
             # print([max(map(len, ele['input_ids'])) for ele in examples['continuation_enc']])
             continuation_enc = max([max(map(len, ele['input_ids'])) for ele in examples['continuation_enc'] ])
-            self.padding_length = context_enc+continuation_enc+20
+            self.padding_length = max(context_enc+continuation_enc+20, self.padding_length)
             print(context_enc,continuation_enc)
             return None
         self.dataset.map(set_padding, batched=True)
