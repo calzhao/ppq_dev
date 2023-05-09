@@ -3,7 +3,7 @@ for model in decapoda-research/llama-7b-hf decapoda-research/llama-13b-hf decapo
 do
     for task in wikitext lambada hellaswag piqa
     do
-        python ./ppq/samples/LLM/llm_eval.py --model $model --task wikitext --method snr --layerwise final >wiki_llama_cosine.out
+        python ./ppq/samples/LLM/llm_eval.py --model $model --task $task --method snr --layerwise final >full_llama_cosine.out
         if [ $? -ne 0 ]; then
             echo "Error: Python command $model $task failed."
         fi
@@ -14,7 +14,7 @@ for model in facebook/opt-350m facebook/opt-1.3b facebook/opt-2.7b facebook/opt-
 do
     for task in wikitext lambada hellaswag piqa
     do
-        python ./ppq/samples/LLM/llm_eval.py --model $model --task wikitext --method snr --layerwise final >wiki_opt_cosine.out
+        python ./ppq/samples/LLM/llm_eval.py --model $model --task $task --method snr --layerwise final >full_opt_cosine.out
         if [ $? -ne 0 ]; then
             echo "Error: Python command $model $task failed."
         fi
